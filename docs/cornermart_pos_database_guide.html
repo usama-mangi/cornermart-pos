@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CornerMart POS — How the Database Works</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            serif: ['Newsreader', 'Georgia', 'serif'],
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+          },
+          colors: {
+            paper: '#F8F7F4',
+            card: '#FFFFFF',
+            ink: '#1C1B18',
+            muted: '#5C5A54',
+            hairline: '#E5E2DC',
+            terracotta: '#B85032',
+            forest: '#2B5B46',
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background-color: #F8F7F4;
+      color: #1C1B18;
+      font-family: 'Inter', system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .tab-link[aria-selected="true"] {
+      color: #1C1B18;
+      border-bottom-color: #B85032;
+      font-weight: 600;
+    }
+    .flow-node {
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .flow-node:hover rect {
+      stroke: #B85032;
+      stroke-width: 1.8;
+    }
+    .flow-node.active rect {
+      fill: #FDF6F3;
+      stroke: #B85032;
+      stroke-width: 2;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-paper text-ink">
+  <!-- Header & Minimal Underline Navigation -->
+  <header class="border-b border-hairline bg-card/90 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-5xl mx-auto px-5 sm:px-8 pt-7 pb-0">
+      <div class="pb-6">
+        <h1 class="font-serif text-2xl sm:text-3xl font-semibold text-ink tracking-tight mt-1">
+          CornerMart POS Database Guide
+        </h1>
+      </div>
+
+      <nav aria-label="Primary views" class="flex gap-7 overflow-x-auto">
+        <button type="button" role="tab" aria-selected="true" data-view="how"
+          class="tab-link pb-3.5 text-sm text-muted hover:text-ink border-b-2 border-transparent whitespace-nowrap transition-colors">
+          How It Works
+        </button>
+        <button type="button" role="tab" aria-selected="false" data-view="flows"
+          class="tab-link pb-3.5 text-sm text-muted hover:text-ink border-b-2 border-transparent whitespace-nowrap transition-colors">
+          Visual Flows
+        </button>
+        <button type="button" role="tab" aria-selected="false" data-view="tables"
+          class="tab-link pb-3.5 text-sm text-muted hover:text-ink border-b-2 border-transparent whitespace-nowrap transition-colors">
+          All 25 Tables
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-5 sm:px-8 py-10">
+    <!-- ================================================================== -->
+    <!-- VIEW 1: HOW IT WORKS (DEFAULT)                                     -->
+    <!-- ================================================================== -->
+    <section id="panel-how" class="space-y-8">
+      <!-- Mechanism A -->
+      <article class="bg-card border border-hairline rounded-xl p-6 sm:p-8 space-y-3">
+        <h2 class="font-serif text-xl sm:text-2xl font-semibold text-ink">
+          1. Tracking stock without losing history
+        </h2>
+        <p class="text-sm sm:text-base text-muted leading-relaxed">
+          Instead of only storing a single number for how many items are on the shelf, the database keeps two linked records for every product at every store location.
+        </p>
+        <p class="text-sm sm:text-base text-ink/90 leading-relaxed">
+          <span class="font-mono text-xs bg-paper px-1.5 py-0.5 rounded border border-hairline">stock_level</span> holds the live balance right now (<span class="font-mono text-xs">qty_on_hand</span>, <span class="font-mono text-xs">qty_reserved</span>, and weighted average cost <span class="font-mono text-xs">avg_cost</span>) so the cash register can check availability instantly. Every time stock arrives, sells, transfers, or gets adjusted, a permanent signed entry is written to <span class="font-mono text-xs bg-paper px-1.5 py-0.5 rounded border border-hairline">stock_movement</span>. The database blocks <span class="font-mono text-xs">qty_reserved</span> from ever exceeding <span class="font-mono text-xs">qty_on_hand</span>, so you cannot sell stock you do not have.
+        </p>
+      </article>
+
+      <!-- Mechanism B + Interactive Order Lifecycle -->
+      <article class="bg-card border border-hairline rounded-xl p-6 sm:p-8 space-y-5">
+        <div class="space-y-2">
+          <h2 class="font-serif text-xl sm:text-2xl font-semibold text-ink">
+            2. How orders, holds, and pickup move step by step
+          </h2>
+          <p class="text-sm sm:text-base text-muted leading-relaxed">
+            Both in-store register sales (<span class="font-mono text-xs text-ink">POS</span>) and web orders (<span class="font-mono text-xs text-ink">ONLINE</span>) live in <span class="font-mono text-xs text-ink">sales_order</span>. Click any stage below to see what happens to the reserved stock and the order history at that moment.
+          </p>
+        </div>
+
+        <!-- Interactive Step Buttons -->
+        <div class="flex flex-wrap gap-2 pt-1" id="order-step-buttons"></div>
+
+        <!-- Step Explanation Box -->
+        <div id="order-step-detail" class="bg-paper border border-hairline rounded-lg p-5 space-y-3"></div>
+      </article>
+
+      <!-- Mechanism C -->
+      <article class="bg-card border border-hairline rounded-xl p-6 sm:p-8 space-y-3">
+        <h2 class="font-serif text-xl sm:text-2xl font-semibold text-ink">
+          3. Locking prices and taxes at the moment of sale
+        </h2>
+        <p class="text-sm sm:text-base text-muted leading-relaxed">
+          Catalog prices change, and tax rates have start and end dates in <span class="font-mono text-xs text-ink">tax_rate</span>. If an order line simply pointed back to the product table, raising the price of milk next week would rewrite last month's receipts.
+        </p>
+        <p class="text-sm sm:text-base text-ink/90 leading-relaxed">
+          To prevent that, <span class="font-mono text-xs bg-paper px-1.5 py-0.5 rounded border border-hairline">sales_order_line</span> copies the exact <span class="font-mono text-xs">unit_price</span> and <span class="font-mono text-xs">tax_rate_pct</span> onto the line item when the order is created. Database rules also require a written <span class="font-mono text-xs">discount_reason</span> whenever a cashier applies a discount greater than zero, and verify that <span class="font-mono text-xs">line_net + line_tax = line_total</span>.
+        </p>
+      </article>
+
+      <!-- Mechanism D -->
+      <article class="bg-card border border-hairline rounded-xl p-6 sm:p-8 space-y-3">
+        <h2 class="font-serif text-xl sm:text-2xl font-semibold text-ink">
+          4. Taking payments and issuing refunds without double-charging
+        </h2>
+        <p class="text-sm sm:text-base text-muted leading-relaxed">
+          Network drops at the register and duplicate webhook retries from payment gateways are normal in retail. Each payment attempt carries two unique guards in <span class="font-mono text-xs text-ink">payment</span>: <span class="font-mono text-xs text-ink">idem_key</span> (stops a retried checkout request from charging twice) and <span class="font-mono text-xs text-ink">gateway_event_id</span> (stops a repeated gateway callback from being processed twice).
+        </p>
+        <p class="text-sm sm:text-base text-ink/90 leading-relaxed">
+          When money is returned, the original payment row is never overwritten. Instead, each partial or full refund is recorded as its own permanent row in <span class="font-mono text-xs bg-paper px-1.5 py-0.5 rounded border border-hairline">refund</span> tied back to the original payment.
+        </p>
+      </article>
+
+      <!-- Mechanism E -->
+      <article class="bg-card border border-hairline rounded-xl p-6 sm:p-8 space-y-3">
+        <h2 class="font-serif text-xl sm:text-2xl font-semibold text-ink">
+          5. Locking sensitive records against edits or deletion
+        </h2>
+        <p class="text-sm sm:text-base text-muted leading-relaxed">
+          Five tables in this database are strictly append-only: <span class="font-mono text-xs text-ink">stock_movement</span>, <span class="font-mono text-xs text-ink">order_status_history</span>, <span class="font-mono text-xs text-ink">refund</span>, <span class="font-mono text-xs text-ink">app_log</span>, and <span class="font-mono text-xs text-ink">audit_log</span>. Database triggers reject any <span class="font-mono text-xs">UPDATE</span> or <span class="font-mono text-xs">DELETE</span> on those tables with error <span class="font-mono text-xs text-terracotta">-20901</span>.
+        </p>
+        <p class="text-sm sm:text-base text-ink/90 leading-relaxed">
+          Similarly, once an inventory <span class="font-mono text-xs text-ink">cycle_count</span> reaches <span class="font-mono text-xs">CLOSED</span>, a trigger locks the count against further changes (<span class="font-mono text-xs text-terracotta">-20902</span>). On all 20 editable tables, triggers automatically stamp who created or changed each row, record UTC timestamps, and increment <span class="font-mono text-xs">row_version</span> so two people cannot silently overwrite each other's edits.
+        </p>
+      </article>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- VIEW 2: VISUAL FLOWS                                               -->
+    <!-- ================================================================== -->
+    <section id="panel-flows" class="hidden space-y-8">
+      <!-- Diagram A: Stock & Reservation Loop -->
+      <article class="bg-card border border-hairline rounded-xl p-6 sm:p-8 space-y-5">
+        <div>
+          <h2 class="font-serif text-xl sm:text-2xl font-semibold text-ink">
+            Stock &amp; Reservation Loop
+          </h2>
+          <p class="text-sm text-muted mt-1">
+            Click any step in the diagram to inspect what happens and which tables change.
+          </p>
+        </div>
+
+        <div class="overflow-x-auto pb-1">
+          <svg viewBox="0 0 880 155" class="w-full min-w-[680px] h-auto select-none" aria-label="Stock and Reservation Loop">
+            <defs>
+              <marker id="arrow-ink" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#5C5A54" />
+              </marker>
+            </defs>
+
+            <!-- Connectors -->
+            <line x1="156" y1="54" x2="184" y2="54" stroke="#5C5A54" stroke-width="1.4" marker-end="url(#arrow-ink)" />
+            <line x1="336" y1="54" x2="364" y2="54" stroke="#5C5A54" stroke-width="1.4" marker-end="url(#arrow-ink)" />
+            <line x1="516" y1="54" x2="544" y2="54" stroke="#5C5A54" stroke-width="1.4" marker-end="url(#arrow-ink)" />
+            <line x1="696" y1="54" x2="724" y2="54" stroke="#5C5A54" stroke-width="1.4" marker-end="url(#arrow-ink)" />
+            <path d="M 800 84 L 800 124 L 260 124 L 260 88" fill="none" stroke="#5C5A54" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arrow-ink)" />
+
+            <!-- Node 1 -->
+            <g class="flow-node active" data-loop="stock" data-node="receive">
+              <rect x="6" y="24" width="150" height="60" rx="8" fill="#FFFFFF" stroke="#E5E2DC" stroke-width="1.5" />
+              <text x="81" y="50" text-anchor="middle" font-family="Inter" font-size="13" font-weight="600" fill="#1C1B18">1. Receiving</text>
+              <text x="81" y="68" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#5C5A54">stock_movement</text>
+            </g>
+
+            <!-- Node 2 -->
+            <g class="flow-node" data-loop="stock" data-node="level">
+              <rect x="186" y="24" width="150" height="60" rx="8" fill="#FFFFFF" stroke="#E5E2DC" stroke-width="1.5" />
+              <text x="261" y="50" text-anchor="middle" font-family="Inter" font-size="13" font-weight="600" fill="#1C1B18">2. Stock Level</text>
+              <text x="261" y="68" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#5C5A54">stock_level</text>
+            </g>
+
+            <!-- Node 3 -->
+            <g class="flow-node" data-loop="stock" data-node="hold">
+              <rect x="366" y="24" width="150" height="60" rx="8" fill="#FFFFFF" stroke="#E5E2DC" stroke-width="1.5" />
+              <text x="441" y="50" text-anchor="middle" font-family="Inter" font-size="13" font-weight="600" fill="#1C1B18">3. Checkout Hold</text>
+              <text x="441" y="68" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#5C5A54">stock_reservation</text>
+            </g>
+
+            <!-- Node 4 -->
+            <g class="flow-node" data-loop="stock" data-node="consume">
+              <rect x="546" y="24" width="150" height="60" rx="8" fill="#FFFFFF" stroke="#E5E2DC" stroke-width="1.5" />
+              <text x="621" y="50" text-anchor="middle" font-family="Inter" font-size="13" font-weight="600" fill="#1C1B18">4. Sale or Release</text>
+              <text x="621" y="68" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#5C5A54">SALE / RELEASED</text>
+            </g>
+
+            <!-- Node 5 -->
+            <g class="flow-node" data-loop="stock" data-node="count">
+              <rect x="726" y="24" width="150" height="60" rx="8" fill="#FFFFFF" stroke="#E5E2DC" stroke-width="1.5" />
+              <text x="801" y="50" text-anchor="middle" font-family="Inter" font-size="13" font-weight="600" fill="#1C1B18">5. Cycle Count</text>
+              <text x="801" y="68" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#5C5A54">cycle_count</text>
+            </g>
+
+            <text x="530" y="142" text-anchor="middle" font-family="Inter" font-size="11" fill="#5C5A54">
+              Physical variances post an ADJUSTMENT back to stock_level
+            </text>
+          </svg>
+        </div>
+
+        <div id="stock-flow-detail" class="bg-paper border border-hairline rounded-lg p-5 space-y-2"></div>
+      </article>
+
+      <!-- Diagram B: Order & Payment Flow -->
+      <article class="bg-card border border-hairline rounded-xl p-6 sm:p-8 space-y-5">
+        <div>
+          <h2 class="font-serif text-xl sm:text-2xl font-semibold text-ink">
+            Order &amp; Payment Flow
+          </h2>
+          <p class="text-sm text-muted mt-1">
+            Click any step to see how customer carts turn into paid orders, background events, and refunds.
+          </p>
+        </div>
+
+        <div class="overflow-x-auto pb-1">
+          <svg viewBox="0 0 880 120" class="w-full min-w-[680px] h-auto select-none" aria-label="Order and Payment Flow">
+            <line x1="156" y1="54" x2="184" y2="54" stroke="#5C5A54" stroke-width="1.4" marker-end="url(#arrow-ink)" />
+            <line x1="336" y1="54" x2="364" y2="54" stroke="#5C5A54" stroke-width="1.4" marker-end="url(#arrow-ink)" />
+            <line x1="516" y1="54" x2="544" y2="54" stroke="#5C5A54" stroke-width="1.4" marker-end="url(#arrow-ink)" />
+            <line x1="696" y1="54" x2="724" y2="54" stroke="#5C5A54" stroke-width="1.4" marker-end="url(#arrow-ink)" />
+
+            <!-- Node 1 -->
+            <g class="flow-node active" data-loop="order" data-node="cart">
+              <rect x="6" y="24" width="150" height="60" rx="8" fill="#FFFFFF" stroke="#E5E2DC" stroke-width="1.5" />
+              <text x="81" y="50" text-anchor="middle" font-family="Inter" font-size="13" font-weight="600" fill="#1C1B18">1. Cart &amp; Lookup</text>
+              <text x="81" y="68" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#5C5A54">product / barcode</text>
+            </g>
+
+            <!-- Node 2 -->
+            <g class="flow-node" data-loop="order" data-node="order">
+              <rect x="186" y="24" width="150" height="60" rx="8" fill="#FFFFFF" stroke="#E5E2DC" stroke-width="1.5" />
+              <text x="261" y="50" text-anchor="middle" font-family="Inter" font-size="13" font-weight="600" fill="#1C1B18">2. Price Snapshot</text>
+              <text x="261" y="68" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#5C5A54">sales_order_line</text>
+            </g>
+
+            <!-- Node 3 -->
+            <g class="flow-node" data-loop="order" data-node="pay">
+              <rect x="366" y="24" width="150" height="60" rx="8" fill="#FFFFFF" stroke="#E5E2DC" stroke-width="1.5" />
+              <text x="441" y="50" text-anchor="middle" font-family="Inter" font-size="13" font-weight="600" fill="#1C1B18">3. Safe Payment</text>
+              <text x="441" y="68" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#5C5A54">payment (idem_key)</text>
+            </g>
+
+            <!-- Node 4 -->
+            <g class="flow-node" data-loop="order" data-node="outbox">
+              <rect x="546" y="24" width="150" height="60" rx="8" fill="#FFFFFF" stroke="#E5E2DC" stroke-width="1.5" />
+              <text x="621" y="50" text-anchor="middle" font-family="Inter" font-size="13" font-weight="600" fill="#1C1B18">4. Outbox Event</text>
+              <text x="621" y="68" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#5C5A54">outbox_event</text>
+            </g>
+
+            <!-- Node 5 -->
+            <g class="flow-node" data-loop="order" data-node="refund">
+              <rect x="726" y="24" width="150" height="60" rx="8" fill="#FFFFFF" stroke="#E5E2DC" stroke-width="1.5" />
+              <text x="801" y="50" text-anchor="middle" font-family="Inter" font-size="13" font-weight="600" fill="#1C1B18">5. Refund Ledger</text>
+              <text x="801" y="68" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#5C5A54">refund</text>
+            </g>
+          </svg>
+        </div>
+
+        <div id="order-flow-detail" class="bg-paper border border-hairline rounded-lg p-5 space-y-2"></div>
+      </article>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- VIEW 3: ALL 25 TABLES                                              -->
+    <!-- ================================================================== -->
+    <section id="panel-tables" class="hidden space-y-6">
+      <div class="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+        <div class="flex flex-wrap gap-1.5" id="group-filters"></div>
+        <input id="table-search" type="search" placeholder="Search table or column..."
+          class="bg-card border border-hairline rounded-lg px-3.5 py-2 text-sm text-ink placeholder-muted w-full sm:w-64 focus:outline-none focus:border-terracotta" />
+      </div>
+
+      <div id="tables-container" class="space-y-8"></div>
+    </section>
+  </main>
+
+  <script>
+    // =======================================================================
+    // 1. ORDER LIFECYCLE DATA (Plain English)
+    // =======================================================================
+    const ORDER_STEPS = [
+      {
+        status: 'PLACED',
+        summary: 'The customer submits a cart online or starts a sale at the counter.',
+        stockEffect: 'Creates an ACTIVE row in stock_reservation with a 30-minute expiry timer and adds those units to stock_level.qty_reserved so nobody else can buy them.',
+        moneyEffect: 'Totals and tax rates are frozen on sales_order and sales_order_line. No money has been captured yet.',
+        history: 'Appends a row to order_status_history with from_status = NULL and to_status = PLACED.'
+      },
+      {
+        status: 'PAID',
+        summary: 'Cash is collected at the counter or the card/online gateway confirms payment.',
+        stockEffect: 'Marks the stock_reservation as CONSUMED, writes a negative SALE row to stock_movement, and subtracts the units from both qty_on_hand and qty_reserved.',
+        moneyEffect: 'Records a CONFIRMED row in payment (protected by idem_key and gateway_event_id) and queues an event in outbox_event.',
+        history: 'Appends PLACED -> PAID to order_status_history.'
+      },
+      {
+        status: 'PACKED',
+        summary: 'Store staff pick the items off the shelf and bag the order.',
+        stockEffect: 'No change — stock was already deducted when the order was paid.',
+        moneyEffect: 'No change.',
+        history: 'Appends PAID -> PACKED to order_status_history with the staff member’s username.'
+      },
+      {
+        status: 'READY',
+        summary: 'The packed order is staged at the pickup counter.',
+        stockEffect: 'No change.',
+        moneyEffect: 'Outbox worker sends pickup notification along with the order’s handover verification code (stored hashed as handover_code_hash).',
+        history: 'Appends PACKED -> READY to order_status_history.'
+      },
+      {
+        status: 'COMPLETED',
+        summary: 'The customer presents their handover code and walks out with the goods.',
+        stockEffect: 'No change.',
+        moneyEffect: 'Order is fulfilled. Any later return creates a new row in refund and a positive RETURN entry in stock_movement.',
+        history: 'Appends READY -> COMPLETED to order_status_history.'
+      },
+      {
+        status: 'CANCELLED',
+        summary: 'The customer cancels before pickup or the 30-minute unpaid reservation timer runs out.',
+        stockEffect: 'If unpaid, stock_reservation changes to RELEASED and qty_reserved drops back down. If already paid, a positive RETURN movement restores qty_on_hand.',
+        moneyEffect: 'If already paid, a row is appended to refund and payment status becomes REFUNDED.',
+        history: 'Appends current status -> CANCELLED to order_status_history with a reason.'
+      }
+    ];
+
+    // =======================================================================
+    // 2. VISUAL FLOW NODE EXPLANATIONS
+    // =======================================================================
+    const STOCK_NODES = {
+      receive: {
+        title: '1. Receiving goods from a supplier',
+        body: 'When a delivery arrives, the system inserts a positive RECEIPT row into stock_movement with the supplier ID and unit cost frozen at that moment.',
+        tables: 'stock_movement, supplier'
+      },
+      level: {
+        title: '2. Updating the live shelf balance',
+        body: 'In the same transaction, stock_level adds the received units to qty_on_hand and recalculates the weighted average cost (avg_cost).',
+        tables: 'stock_level, product, location'
+      },
+      hold: {
+        title: '3. Placing a temporary checkout hold',
+        body: 'During checkout, stock_reservation holds the requested quantity for 30 minutes (expires_at) and increases qty_reserved. A database check prevents qty_reserved from exceeding qty_on_hand.',
+        tables: 'stock_reservation, stock_level'
+      },
+      consume: {
+        title: '4. Completing the sale or releasing expired holds',
+        body: 'If paid, the hold becomes CONSUMED, a negative SALE row is written to stock_movement, and qty_on_hand decreases. If unpaid after 30 minutes, the hold becomes RELEASED and qty_reserved drops back down.',
+        tables: 'stock_reservation, stock_movement, stock_level'
+      },
+      count: {
+        title: '5. Reconciling physical shelf counts',
+        body: 'During a stocktake, cycle_count_line compares the system snapshot_qty against counted_qty. Any difference posts a signed ADJUSTMENT (with a mandatory reason like DAMAGE or LOSS) and locks the count once CLOSED.',
+        tables: 'cycle_count, cycle_count_line, stock_movement'
+      }
+    };
+
+    const ORDER_NODES = {
+      cart: {
+        title: '1. Building the cart & scanning barcodes',
+        body: 'Cashiers scan a barcode in product_barcode (multiple barcodes can map to one product) or look up a SKU in product to check the current tax-inclusive price and active tax rate.',
+        tables: 'product, product_barcode, tax_rate'
+      },
+      order: {
+        title: '2. Creating the order & freezing prices',
+        body: 'sales_order generates a non-sequential public order_no and enforces customer_id + idem_key uniqueness. Each sales_order_line copies unit_price and tax_rate_pct so future price changes never alter past receipts.',
+        tables: 'sales_order, sales_order_line, order_status_history'
+      },
+      pay: {
+        title: '3. Capturing payment safely',
+        body: 'payment stores the amount, method (CASH, CARD, or ONLINE), and masked card details (token, last4, brand). Unique keys on idem_key and gateway_event_id guarantee retries never double-charge.',
+        tables: 'payment'
+      },
+      outbox: {
+        title: '4. Queuing background notifications reliably',
+        body: 'Inside the same database transaction as the order or payment update, a JSON event is written to outbox_event. A background worker polls rows where processed_at is null and delivers emails or webhooks.',
+        tables: 'outbox_event'
+      },
+      refund: {
+        title: '5. Recording partial or full refunds',
+        body: 'Refunds never edit the original payment amount. Each return writes a new, uneditable row to refund with a required reason, allowing multiple partial refunds up to the original paid amount.',
+        tables: 'refund, payment'
+      }
+    };
+
+    // =======================================================================
+    // 3. ALL 25 TABLES DIRECTORY
+    // =======================================================================
+    const TABLES = [
+      // People & Access
+      {
+        name: 'app_role',
+        group: 'People & Access',
+        mode: 'Editable',
+        summary: 'Defines the 8 system roles (Guest, Customer, Cashier, Stock Manager, Admin, Employee, Supplier, System).',
+        columns: 'id (PK), code (UK), name, description, active, row_version, created_by/at, updated_by/at',
+        rules: 'active must be Y or N. Seeded with 8 standard retail roles.'
+      },
+      {
+        name: 'app_config',
+        group: 'People & Access',
+        mode: 'Editable',
+        summary: 'Stores key-value operational settings like reservation hold time (30 min) and max line quantity (99).',
+        columns: 'id (PK), config_key (UK), config_value, description, row_version, WHO columns',
+        rules: 'config_key is unique across the system.'
+      },
+      {
+        name: 'location',
+        group: 'People & Access',
+        mode: 'Editable',
+        summary: 'Represents physical store branches or stockrooms where inventory is held and orders are fulfilled.',
+        columns: 'id (PK), code (UK), name, active, attribute1..10, row_version, WHO columns',
+        rules: 'Supports 10 custom flex attributes (PM1). Seeded with MAIN store.'
+      },
+      {
+        name: 'tax_rate',
+        group: 'People & Access',
+        mode: 'Editable',
+        summary: 'Holds tax percentages along with the date range each rate is valid.',
+        columns: 'id (PK), code, rate_pct, valid_from, valid_to, row_version, WHO columns',
+        rules: 'Unique on (code, valid_from); rate_pct between 0 and 100; valid_to must be after valid_from.'
+      },
+      {
+        name: 'supplier',
+        group: 'People & Access',
+        mode: 'Editable',
+        summary: 'Stores wholesale vendors who supply products to the store.',
+        columns: 'id (PK), code (UK), name, contact_name, email, phone, active, attribute1..10, WHO columns',
+        rules: 'Unique supplier code; includes 10 flex attributes.'
+      },
+      {
+        name: 'app_user',
+        group: 'People & Access',
+        mode: 'Editable',
+        summary: 'Login accounts for staff, registered shoppers, and external supplier portal users.',
+        columns: 'id (PK), username (UK), display_name, email, supplier_id (FK), active, WHO columns',
+        rules: 'supplier_id is populated only when the user belongs to an external supplier.'
+      },
+      {
+        name: 'app_user_role',
+        group: 'People & Access',
+        mode: 'Editable',
+        summary: 'Links users to one or more roles so a single person can hold multiple permissions.',
+        columns: 'id (PK), app_user_id (FK), app_role_id (FK), active, row_version, WHO columns',
+        rules: 'Unique pair (app_user_id, app_role_id).'
+      },
+      {
+        name: 'employee',
+        group: 'People & Access',
+        mode: 'Editable',
+        summary: 'HR profile for store staff, optionally linked 1-to-1 with an app_user login.',
+        columns: 'id (PK), employee_no (UK), app_user_id (UK/FK), full_name, job_title, hire_date, attribute1..10, WHO columns',
+        rules: 'Both employee_no and app_user_id are unique.'
+      },
+      {
+        name: 'customer',
+        group: 'People & Access',
+        mode: 'Editable',
+        summary: 'Shopper directory supporting both registered accounts and guest buyers, with privacy anonymization support.',
+        columns: 'id (PK), app_user_id (UK/FK, nullable), name, email, phone, anonymized_at, attribute1..10, WHO columns',
+        rules: 'app_user_id is null for guest-only shoppers; indexed on email.'
+      },
+
+      // Product Catalog
+      {
+        name: 'product',
+        group: 'Product Catalog',
+        mode: 'Editable',
+        summary: 'Master catalog of sellable items, including SKU, unit of measure, tax-inclusive price, and reorder point.',
+        columns: 'id (PK), sku (UK), name, uom, price, tax_rate_id (FK), reorder_point, active, attribute1..10, WHO columns',
+        rules: 'price >= 0; reorder_point >= 0 when set.'
+      },
+      {
+        name: 'product_barcode',
+        group: 'Product Catalog',
+        mode: 'Editable',
+        summary: 'Maps one or more scannable barcodes (UPC/EAN) to a single product.',
+        columns: 'id (PK), product_id (FK), barcode (UK), active, row_version, WHO columns',
+        rules: 'Every barcode string is globally unique across all products.'
+      },
+      {
+        name: 'product_supplier',
+        group: 'Product Catalog',
+        mode: 'Editable',
+        summary: 'Links products to their approved suppliers along with vendor SKUs and delivery lead times.',
+        columns: 'id (PK), product_id (FK), supplier_id (FK), supplier_sku, lead_time_days, active, WHO columns',
+        rules: 'Unique on (product_id, supplier_id); lead_time_days >= 0.'
+      },
+
+      // Stock & Counts
+      {
+        name: 'stock_level',
+        group: 'Stock & Counts',
+        mode: 'Editable',
+        summary: 'Live balance of on-hand units, reserved units, and weighted average cost per product and location.',
+        columns: 'id (PK), product_id (FK), location_id (FK), qty_on_hand, qty_reserved, avg_cost, WHO columns',
+        rules: 'Unique (product_id, location_id). Enforces 0 <= qty_reserved <= qty_on_hand.'
+      },
+      {
+        name: 'stock_movement',
+        group: 'Stock & Counts',
+        mode: 'Append-Only',
+        summary: 'Permanent ledger of every stock increase or decrease (receipts, sales, returns, transfers, and adjustments).',
+        columns: 'id (PK), stock_level_id (FK), type, qty, unit_cost, supplier_id (FK), ref_type, ref_id, reason, WHO columns',
+        rules: 'Updates/deletes blocked (-20901). Enforces positive/negative sign rules by type and requires a reason for ADJUSTMENT.'
+      },
+      {
+        name: 'cycle_count',
+        group: 'Stock & Counts',
+        mode: 'Locks on Close',
+        summary: 'Header record for a physical inventory count session at a store location.',
+        columns: 'id (PK), location_id (FK), status, opened_at, closed_at, approved_by, WHO columns',
+        rules: 'Status moves OPEN -> PENDING_APPROVAL -> CLOSED. Once CLOSED, trigger trg_cycle_count_closed blocks any edits (-20902).'
+      },
+      {
+        name: 'cycle_count_line',
+        group: 'Stock & Counts',
+        mode: 'Editable',
+        summary: 'Per-product expected vs. counted quantities during a stocktake, linking any variance to an adjustment movement.',
+        columns: 'id (PK), cycle_count_id (FK), product_id (FK), snapshot_qty, counted_qty, variance_qty, variance_value, adjustment_movement_id (FK), WHO columns',
+        rules: 'Unique on (cycle_count_id, product_id); quantities cannot be negative.'
+      },
+
+      // Orders & Holds
+      {
+        name: 'sales_order',
+        group: 'Orders & Holds',
+        mode: 'Editable',
+        summary: 'Customer order header for both in-store POS checkouts and online pickup orders.',
+        columns: 'id (PK), order_no (UK), channel, customer_id (FK), location_id (FK), status, currency, total, tax_total, rounding_adj, handover_code_hash, idem_key, expires_at, attribute1..10, WHO columns',
+        rules: 'Online orders require customer_id or contact_email; 0 <= tax_total <= total; unique (customer_id, idem_key).'
+      },
+      {
+        name: 'sales_order_line',
+        group: 'Orders & Holds',
+        mode: 'Editable',
+        summary: 'Individual line items on an order with price, tax rate, and discount locked at checkout time.',
+        columns: 'id (PK), order_id (FK), product_id (FK), qty, unit_price, tax_rate_pct, discount_amount, discount_reason, approved_by, line_net, line_tax, line_total, attribute1..10, WHO columns',
+        rules: 'qty must be > 0 and <= 99; discount > 0 requires discount_reason; line_total = line_net + line_tax.'
+      },
+      {
+        name: 'stock_reservation',
+        group: 'Orders & Holds',
+        mode: 'Editable',
+        summary: 'Temporary hold on stock for an unpaid order line so items are not oversold while the shopper pays.',
+        columns: 'id (PK), stock_level_id (FK), order_line_id (FK), qty, status, expires_at, WHO columns',
+        rules: 'qty > 0; status is ACTIVE, CONSUMED, or RELEASED; indexed on (status, expires_at) for expiry cleanup.'
+      },
+      {
+        name: 'order_status_history',
+        group: 'Orders & Holds',
+        mode: 'Append-Only',
+        summary: 'Complete timeline of every status change on an order and who triggered it.',
+        columns: 'id (PK), order_id (FK), from_status, to_status, reason, changed_by, changed_at, WHO columns',
+        rules: 'Updates/deletes blocked (-20901). Tracks transitions across PLACED, PAID, PACKED, READY, COMPLETED, CANCELLED.'
+      },
+
+      // Payments & Refunds
+      {
+        name: 'payment',
+        group: 'Payments & Refunds',
+        mode: 'Editable',
+        summary: 'Records cash, card, or online payments against an order, guarded against duplicate retries.',
+        columns: 'id (PK), order_id (FK), method, amount, currency, status, idem_key (UK), gateway_ref, gateway_event_id (UK), token, last4, brand, WHO columns',
+        rules: 'amount > 0; unique idem_key and gateway_event_id; last4 must be 4 digits when present.'
+      },
+      {
+        name: 'refund',
+        group: 'Payments & Refunds',
+        mode: 'Append-Only',
+        summary: 'Permanent ledger of full or partial refunds issued against a payment.',
+        columns: 'id (PK), payment_id (FK), amount, currency, reason, WHO columns',
+        rules: 'Updates/deletes blocked (-20901); amount > 0; reason is mandatory.'
+      },
+
+      // System Logs
+      {
+        name: 'outbox_event',
+        group: 'System Logs',
+        mode: 'Editable',
+        summary: 'Transactional queue of JSON events waiting to be sent to external services or notifications.',
+        columns: 'id (PK), aggregate_type, aggregate_id, type, payload (JSON CLOB), attempts, last_error, processed_at, WHO columns',
+        rules: 'payload validated with IS JSON; sparse index targets only rows where processed_at IS NULL.'
+      },
+      {
+        name: 'app_log',
+        group: 'System Logs',
+        mode: 'Append-Only',
+        summary: 'Structured application diagnostic logs with correlation IDs for tracing requests.',
+        columns: 'id (PK), log_level, module, message, context (JSON CLOB), correlation_id, WHO columns',
+        rules: 'Updates/deletes blocked (-20901); log_level in DEBUG, INFO, WARN, ERROR; context validated with IS JSON.'
+      },
+      {
+        name: 'audit_log',
+        group: 'System Logs',
+        mode: 'Append-Only',
+        summary: 'Security audit trail capturing before-and-after JSON snapshots of sensitive administrative actions.',
+        columns: 'id (PK), user_name, role_code, action, object_type, object_id, old_value (JSON CLOB), new_value (JSON CLOB), ip_address, correlation_id, WHO columns',
+        rules: 'Updates/deletes blocked (-20901); old_value and new_value validated with IS JSON.'
+      }
+    ];
+
+    // =======================================================================
+    // RENDER & INTERACTION LOGIC
+    // =======================================================================
+    const state = {
+      view: 'how',
+      orderStep: 0,
+      stockNode: 'receive',
+      orderNode: 'cart',
+      groupFilter: 'All',
+      search: '',
+      expanded: new Set()
+    };
+
+    function esc(str) {
+      return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // View Switching
+    document.querySelectorAll('.tab-link').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.view = btn.dataset.view;
+        document.querySelectorAll('.tab-link').forEach(b => {
+          b.setAttribute('aria-selected', b.dataset.view === state.view ? 'true' : 'false');
+        });
+        document.querySelectorAll('main > section').forEach(sec => {
+          sec.classList.toggle('hidden', sec.id !== `panel-${state.view}`);
+        });
+      });
+    });
+
+    // Order Lifecycle Interactive Stepper
+    function renderOrderStepper() {
+      const btnWrap = document.getElementById('order-step-buttons');
+      btnWrap.innerHTML = ORDER_STEPS.map((s, idx) => {
+        const active = idx === state.orderStep;
+        return `<button type="button" data-idx="${idx}"
+          class="px-3.5 py-1.5 rounded-lg text-xs font-mono border transition-colors ${
+            active
+              ? 'bg-terracotta text-white border-terracotta font-medium'
+              : 'bg-paper text-ink border-hairline hover:border-muted'
+          }">${esc(s.status)}</button>`;
+      }).join('');
+
+      btnWrap.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', () => {
+          state.orderStep = Number(b.dataset.idx);
+          renderOrderStepper();
+        });
+      });
+
+      const cur = ORDER_STEPS[state.orderStep];
+      document.getElementById('order-step-detail').innerHTML = `
+        <p class="text-sm font-medium text-ink">${esc(cur.summary)}</p>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 text-xs leading-relaxed">
+          <div>
+            <div class="font-semibold text-ink mb-1">Stock &amp; Holds</div>
+            <p class="text-muted">${esc(cur.stockEffect)}</p>
+          </div>
+          <div>
+            <div class="font-semibold text-ink mb-1">Money &amp; Pricing</div>
+            <p class="text-muted">${esc(cur.moneyEffect)}</p>
+          </div>
+          <div>
+            <div class="font-semibold text-ink mb-1">Audit History</div>
+            <p class="text-muted">${esc(cur.history)}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    // Visual Flow Diagrams
+    function renderFlowDetails() {
+      const s = STOCK_NODES[state.stockNode];
+      document.getElementById('stock-flow-detail').innerHTML = `
+        <div class="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
+          <h3 class="text-sm font-semibold text-ink">${esc(s.title)}</h3>
+          <span class="font-mono text-xs text-terracotta">${esc(s.tables)}</span>
+        </div>
+        <p class="text-sm text-muted leading-relaxed">${esc(s.body)}</p>
+      `;
+
+      const o = ORDER_NODES[state.orderNode];
+      document.getElementById('order-flow-detail').innerHTML = `
+        <div class="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
+          <h3 class="text-sm font-semibold text-ink">${esc(o.title)}</h3>
+          <span class="font-mono text-xs text-terracotta">${esc(o.tables)}</span>
+        </div>
+        <p class="text-sm text-muted leading-relaxed">${esc(o.body)}</p>
+      `;
+    }
+
+    document.querySelectorAll('.flow-node').forEach(node => {
+      node.addEventListener('click', () => {
+        const loop = node.dataset.loop;
+        const key = node.dataset.node;
+        if (loop === 'stock') state.stockNode = key;
+        if (loop === 'order') state.orderNode = key;
+
+        document.querySelectorAll(`.flow-node[data-loop="${loop}"]`).forEach(n => {
+          n.classList.toggle('active', n.dataset.node === key);
+        });
+        renderFlowDetails();
+      });
+    });
+
+    // All 25 Tables Directory
+    function renderGroupFilters() {
+      const groups = ['All', ...new Set(TABLES.map(t => t.group))];
+      const wrap = document.getElementById('group-filters');
+      wrap.innerHTML = groups.map(g => {
+        const active = state.groupFilter === g;
+        return `<button type="button" data-group="${esc(g)}"
+          class="px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+            active
+              ? 'bg-ink text-white border-ink font-medium'
+              : 'bg-card text-muted border-hairline hover:text-ink'
+          }">${esc(g)}</button>`;
+      }).join('');
+
+      wrap.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', () => {
+          state.groupFilter = b.dataset.group;
+          renderGroupFilters();
+          renderTables();
+        });
+      });
+    }
+
+    function renderTables() {
+      const q = state.search.toLowerCase();
+      const filtered = TABLES.filter(t => {
+        if (state.groupFilter !== 'All' && t.group !== state.groupFilter) return false;
+        if (!q) return true;
+        return (
+          t.name.toLowerCase().includes(q) ||
+          t.summary.toLowerCase().includes(q) ||
+          t.columns.toLowerCase().includes(q) ||
+          t.rules.toLowerCase().includes(q)
+        );
+      });
+
+      const container = document.getElementById('tables-container');
+      if (!filtered.length) {
+        container.innerHTML = `<div class="bg-card border border-hairline rounded-xl p-8 text-center text-sm text-muted">
+          No tables match "${esc(state.search)}".
+        </div>`;
+        return;
+      }
+
+      const grouped = {};
+      filtered.forEach(t => {
+        if (!grouped[t.group]) grouped[t.group] = [];
+        grouped[t.group].push(t);
+      });
+
+      container.innerHTML = Object.entries(grouped).map(([groupName, rows]) => `
+        <div class="space-y-2.5">
+          <h2 class="font-serif text-lg font-semibold text-ink">${esc(groupName)}</h2>
+          <div class="bg-card border border-hairline rounded-xl divide-y divide-hairline overflow-hidden">
+            ${rows.map(t => {
+              const open = state.expanded.has(t.name);
+              const modeColor = t.mode === 'Append-Only'
+                ? 'text-forest font-medium'
+                : t.mode === 'Locks on Close'
+                  ? 'text-terracotta font-medium'
+                  : 'text-muted';
+
+              return `
+                <div>
+                  <button type="button" data-table="${esc(t.name)}"
+                    class="w-full text-left px-5 py-4 hover:bg-paper/60 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div class="space-y-1 pr-4">
+                      <div class="font-mono text-sm font-medium text-ink">${esc(t.name)}</div>
+                      <p class="text-sm text-muted leading-snug">${esc(t.summary)}</p>
+                    </div>
+                    <div class="flex items-center gap-4 shrink-0 text-xs">
+                      <span class="${modeColor}">${esc(t.mode)}</span>
+                      <span class="font-mono text-muted">${open ? '−' : '+'}</span>
+                    </div>
+                  </button>
+                  ${open ? `
+                    <div class="px-5 pb-4 pt-1 bg-paper/70 border-t border-hairline/70 text-xs space-y-2 leading-relaxed">
+                      <div>
+                        <span class="font-semibold text-ink">Columns: </span>
+                        <span class="font-mono text-muted">${esc(t.columns)}</span>
+                      </div>
+                      <div>
+                        <span class="font-semibold text-ink">Rules &amp; Triggers: </span>
+                        <span class="text-muted">${esc(t.rules)}</span>
+                      </div>
+                    </div>
+                  ` : ''}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `).join('');
+
+      container.querySelectorAll('button[data-table]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const name = btn.dataset.table;
+          if (state.expanded.has(name)) state.expanded.delete(name);
+          else state.expanded.add(name);
+          renderTables();
+        });
+      });
+    }
+
+    document.getElementById('table-search').addEventListener('input', e => {
+      state.search = e.target.value.trim();
+      renderTables();
+    });
+
+    // Initial render
+    renderOrderStepper();
+    renderFlowDetails();
+    renderGroupFilters();
+    renderTables();
+  </script>
+</body>
+</html>
